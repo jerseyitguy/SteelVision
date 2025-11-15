@@ -14,6 +14,9 @@ let handVisible = false;
 const STREAM_WIDTH = 640.0;
 const STREAM_HEIGHT = 480.0;
 
+// Set the alert delay in seconds
+const ALERT_DURATION_SEC = 10;
+
 // Start the application
 document.addEventListener('DOMContentLoaded', () => {
     initSocketIO();
@@ -56,7 +59,9 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function initSocketIO() {
-    let detectionTimeout;
+    let detectionTimeout;    // 3s timer to reset panel when NO detections
+    let alertIntervalId = null; // ID for the 1-second interval timer
+    let alertCountdown = ALERT_DURATION_SEC; // Countdown value
 
     socket.on('connect', () => {
         if (errorContainer) {
@@ -74,7 +79,7 @@ function initSocketIO() {
 
     // === THIS IS THE MODIFIED FUNCTION ===
     socket.on('detection', async (message) => {
-        // Clear any existing 3-second timeout
+        // A detection came in, so clear the 3-second "no detection" timer
         clearTimeout(detectionTimeout);
         
         printDetection(message);
@@ -102,37 +107,88 @@ function initSocketIO() {
 
         // Get the current text element (if one exists)
         const currentFeedbackText = feedbackContentElement.querySelector('p');
+        const isAlerting = currentFeedbackText && currentFeedbackText.style.color === 'red';
 
         if (isOutside) {
-            // Show the alert
-            feedbackContentElement.innerHTML = `
-                <img src="img/hand.gif" alt="Alert">
-                <p style="color: red; font-weight: bold;">ALERT: Face outside zone!</p>
-            `;
-            handVisible = true; // Mark panel as active
+            // Face is OUTSIDE.
+            // Only start the timer if it's not already running AND the final alert isn't already active.
+            if (!alertIntervalId && !isAlerting) {
+                alertCountdown = ALERT_DURATION_SEC; // Reset countdown
+                
+                // Show initial countdown message
+                feedbackContentElement.innerHTML = `
+                    <img src="img/hand.gif" alt="Warning">
+                    <p style="color: orange; font-weight: bold;">Face out of zone! Alerting in ${alertCountdown}s...</p>
+                `;
+                handVisible = true; // Show the countdown message
+
+                // Start the 1-second interval
+                alertIntervalId = setInterval(() => {
+                    alertCountdown--;
+                    if (alertCountdown > 0) {
+                        // Update countdown message
+                        feedbackContentElement.innerHTML = `
+                            <img src="img/hand.gif" alt="Warning">
+                            <p style="color: orange; font-weight: bold;">Face out of zone! Alerting in ${alertCountdown}s...</p>
+                        `;
+                    } else {
+                        // Time's up! Show final alert.
+                        clearInterval(alertIntervalId);
+                        alertIntervalId = null;
+                        feedbackContentElement.innerHTML = `
+                            <img src="img/hand.gif" alt="Alert">
+                            <p style="color: red; font-weight: bold;">ALERT: Face outside zone!</p>
+                        `;
+                    }
+                }, 1000); // Run every 1 second
+            }
         
-        } else { // Face is INSIDE the zone
+        } else { 
+            // Face is INSIDE.
+            let needsGreeting = false;
+
+            // 1. If a countdown is running, stop it.
+            if (alertIntervalId) {
+                clearInterval(alertIntervalId);
+                alertIntervalId = null;
+                needsGreeting = true; // We need to show a greeting
+            }
             
-            // We update the message IF:
-            // 1. The panel is not active (!handVisible)
-            // 2. The panel is *currently* showing the alert (text color is red)
-            if (!handVisible || (currentFeedbackText && currentFeedbackText.style.color === 'red')) {
+            // 2. If the alert is active, we need to show a greeting.
+            if (isAlerting) {
+                needsGreeting = true;
+            }
+
+            // 3. If the panel is off, we need to show a greeting.
+            if (!handVisible) {
+                needsGreeting = true;
+            }
+
+            // If we need to show a greeting, do it.
+            if (needsGreeting) {
                 const greetings = ["Hello!", "Hi there!", "Hey!", "Nice to see you!", "Great to have you here!", "I see you", "Looking good!", "There you are!", "Howdy!", "Happy to see a face!", "Hi, friend!", "Face detected!", "Hello, human!"];
                 const randomGreeting = greetings[Math.floor(Math.random() * greetings.length)];
                 feedbackContentElement.innerHTML = `
                     <img src="img/hand.gif" alt="Hand">
-                    <p>${randomGreeting}</p> `;
+                    <p>${randomGreeting}</p>
+                `;
+                handVisible = true;
             }
-            handVisible = true; // Mark panel as active
         }
 
-        // Set a new timeout to reset the panel after 3s of NO detections
+        // Set the 3-second timer to reset the panel if NO new detections come in.
         detectionTimeout = setTimeout(() => {
             feedbackContentElement.innerHTML = `
                 <img src="img/stars.svg" alt="Stars">
                 <p class="feedback-text">System response will appear here</p>
             `;
             handVisible = false; // Panel is no longer active
+            
+            // Also clear the 10-second alert timer if it was running.
+            if (alertIntervalId) {
+                clearInterval(alertIntervalId);
+                alertIntervalId = null;
+            }
         }, 3000); 
     });
     // === END OF MODIFIED FUNCTION ===
